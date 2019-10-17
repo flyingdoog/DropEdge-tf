@@ -23,12 +23,13 @@ flags.DEFINE_float('dropout', 0.5, 'Dropout rate (1 - keep probability).')
 flags.DEFINE_float('weight_decay', 5e-4, 'Weight for L2 loss on embedding matrix.')
 flags.DEFINE_integer('early_stopping', 10, 'Tolerance for early stopping (# of epochs).')
 flags.DEFINE_integer('max_degree', 3, 'Maximum Chebyshev polynomial degree.')
-flags.DEFINE_float('percent', 1, 'Maximum Chebyshev polynomial degree.')
+flags.DEFINE_float('percent', 0.7, 'Maximum Chebyshev polynomial degree.')
 flags.DEFINE_string('normalization', 'AugNormAdj', 'normalization')  # 'gcn', 'gcn_cheby', 'dense'
 flags.DEFINE_string('task_type', 'semi', 'normalization')  # 'gcn', 'gcn_cheby', 'dense'
 
 # Load data
 adj, features, labels, idx_train, idx_val, idx_test, degree, learning_type = load_citation(FLAGS.dataset,task_type=FLAGS.task_type)
+sample = Sampler(sparse_to_tuple(adj))
 
 train_mask = sample_mask(idx_train, labels.shape[0])
 val_mask = sample_mask(idx_val, labels.shape[0])
@@ -87,7 +88,6 @@ def evaluate(features, support, labels, mask, placeholders):
 sess.run(tf.global_variables_initializer())
 
 cost_val = []
-sample = Sampler(support)
 # Train model
 for epoch in range(FLAGS.epochs):
 
