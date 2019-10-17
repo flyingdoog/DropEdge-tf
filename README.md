@@ -1,4 +1,4 @@
- DropEdge: Towards Deep Graph Convolutional Networks on Node Classification
+Unofficial TF version. DropEdge: Towards Deep Graph Convolutional Networks on Node Classification
 ====
 This is a unofficial Tenforflow implementation of paper: DropEdge: Towards Deep Graph Convolutional Networks on Node Classification
 I simply add the random sampling part to the orignal GCN
