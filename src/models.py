@@ -1,165 +1,177 @@
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from layers import *
-from torch.nn.parameter import Parameter
+from gcn.layers import *
+from gcn.metrics import *
 
-device = torch.device("cuda:0")
+flags = tf.app.flags
+FLAGS = flags.FLAGS
 
 
-class GCNModel(nn.Module):
-    """
-       The model for the single kind of deepgcn blocks.
+class Model(object):
+    def __init__(self, **kwargs):
+        allowed_kwargs = {'name', 'logging'}
+        for kwarg in kwargs.keys():
+            assert kwarg in allowed_kwargs, 'Invalid keyword argument: ' + kwarg
+        name = kwargs.get('name')
+        if not name:
+            name = self.__class__.__name__.lower()
+        self.name = name
 
-       The model architecture likes:
-       inputlayer(nfeat)--block(nbaselayer, nhid)--...--outputlayer(nclass)--softmax(nclass)
-                           |------  nhidlayer  ----|
-       The total layer is nhidlayer*nbaselayer + 2.
-       All options are configurable.
-    """
+        logging = kwargs.get('logging', False)
+        self.logging = logging
 
-    def __init__(self,
-                 nfeat,
-                 nhid,
-                 nclass,
-                 nhidlayer,
-                 dropout,
-                 baseblock="mutigcn",
-                 inputlayer="gcn",
-                 outputlayer="gcn",
-                 nbaselayer=0,
-                 activation=lambda x: x,
-                 withbn=True,
-                 withloop=True,
-                 aggrmethod="add",
-                 mixmode=False):
-        """
-        Initial function.
-        :param nfeat: the input feature dimension.
-        :param nhid:  the hidden feature dimension.
-        :param nclass: the output feature dimension.
-        :param nhidlayer: the number of hidden blocks.
-        :param dropout:  the dropout ratio.
-        :param baseblock: the baseblock type, can be "mutigcn", "resgcn", "densegcn" and "inceptiongcn".
-        :param inputlayer: the input layer type, can be "gcn", "dense", "none".
-        :param outputlayer: the input layer type, can be "gcn", "dense".
-        :param nbaselayer: the number of layers in one hidden block.
-        :param activation: the activation function, default is ReLu.
-        :param withbn: using batch normalization in graph convolution.
-        :param withloop: using self feature modeling in graph convolution.
-        :param aggrmethod: the aggregation function for baseblock, can be "concat" and "add". For "resgcn", the default
-                           is "add", for others the default is "concat".
-        :param mixmode: enable cpu-gpu mix mode. If true, put the inputlayer to cpu.
-        """
-        super(GCNModel, self).__init__()
-        self.mixmode = mixmode
-        self.dropout = dropout
+        self.vars = {}
+        self.placeholders = {}
 
-        if baseblock == "resgcn":
-            self.BASEBLOCK = ResGCNBlock
-        elif baseblock == "densegcn":
-            self.BASEBLOCK = DenseGCNBlock
-        elif baseblock == "mutigcn":
-            self.BASEBLOCK = MultiLayerGCNBlock
-        elif baseblock == "inceptiongcn":
-            self.BASEBLOCK = InecptionGCNBlock
-        else:
-            raise NotImplementedError("Current baseblock %s is not supported." % (baseblock))
-        if inputlayer == "gcn":
-            # input gc
-            self.ingc = GraphConvolutionBS(nfeat, nhid, activation, withbn, withloop)
-            baseblockinput = nhid
-        elif inputlayer == "none":
-            self.ingc = lambda x: x
-            baseblockinput = nfeat
-        else:
-            self.ingc = Dense(nfeat, nhid, activation)
-            baseblockinput = nhid
+        self.layers = []
+        self.activations = []
 
-        outactivation = lambda x: x
-        if outputlayer == "gcn":
-            self.outgc = GraphConvolutionBS(baseblockinput, nclass, outactivation, withbn, withloop)
-        # elif outputlayer ==  "none": #here can not be none
-        #    self.outgc = lambda x: x 
-        else:
-            self.outgc = Dense(nhid, nclass, activation)
+        self.inputs = None
+        self.outputs = None
 
-        # hidden layer
-        self.midlayer = nn.ModuleList()
-        # Dense is not supported now.
-        # for i in xrange(nhidlayer):
-        for i in range(nhidlayer):
-            gcb = self.BASEBLOCK(in_features=baseblockinput,
-                                 out_features=nhid,
-                                 nbaselayer=nbaselayer,
-                                 withbn=withbn,
-                                 withloop=withloop,
-                                 activation=activation,
-                                 dropout=dropout,
-                                 dense=False,
-                                 aggrmethod=aggrmethod)
-            self.midlayer.append(gcb)
-            baseblockinput = gcb.get_outdim()
-        # output gc
-        outactivation = lambda x: x  # we donot need nonlinear activation here.
-        self.outgc = GraphConvolutionBS(baseblockinput, nclass, outactivation, withbn, withloop)
+        self.loss = 0
+        self.accuracy = 0
+        self.optimizer = None
+        self.opt_op = None
 
-        self.reset_parameters()
-        if mixmode:
-            self.midlayer = self.midlayer.to(device)
-            self.outgc = self.outgc.to(device)
+    def _build(self):
+        raise NotImplementedError
 
-    def reset_parameters(self):
+    def build(self):
+        """ Wrapper for _build() """
+        with tf.variable_scope(self.name):
+            self._build()
+
+        # Build sequential layer model
+        self.activations.append(self.inputs)
+        for layer in self.layers:
+            hidden = layer(self.activations[-1])
+            self.activations.append(hidden)
+        self.outputs = self.activations[-1]
+
+        # Store model variables for easy access
+        variables = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=self.name)
+        self.vars = {var.name: var for var in variables}
+
+        # Build metrics
+        self._loss()
+        self._accuracy()
+
+        self.opt_op = self.optimizer.minimize(self.loss)
+
+    def predict(self):
         pass
 
-    def forward(self, fea, adj):
-        # input
-        if self.mixmode:
-            x = self.ingc(fea, adj.cpu())
-        else:
-            x = self.ingc(fea, adj)
+    def _loss(self):
+        raise NotImplementedError
 
-        x = F.dropout(x, self.dropout, training=self.training)
-        if self.mixmode:
-            x = x.to(device)
+    def _accuracy(self):
+        raise NotImplementedError
 
-        # mid block connections
-        # for i in xrange(len(self.midlayer)):
-        for i in range(len(self.midlayer)):
-            midgc = self.midlayer[i]
-            x = midgc(x, adj)
-        # output, no relu and dropput here.
-        x = self.outgc(x, adj)
-        x = F.log_softmax(x, dim=1)
-        return x
+    def save(self, sess=None):
+        if not sess:
+            raise AttributeError("TensorFlow session not provided.")
+        saver = tf.train.Saver(self.vars)
+        save_path = saver.save(sess, "tmp/%s.ckpt" % self.name)
+        print("Model saved in file: %s" % save_path)
 
-
-# Modified GCN
-class GCNFlatRes(nn.Module):
-    """
-    (Legacy)
-    """
-    def __init__(self, nfeat, nhid, nclass, withbn, nreslayer, dropout, mixmode=False):
-        super(GCNFlatRes, self).__init__()
-
-        self.nreslayer = nreslayer
-        self.dropout = dropout
-        self.ingc = GraphConvolution(nfeat, nhid, F.relu)
-        self.reslayer = GCFlatResBlock(nhid, nclass, nhid, nreslayer, dropout)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        # stdv = 1. / math.sqrt(self.attention.size(1))
-        # self.attention.data.uniform_(-stdv, stdv)
-        # print(self.attention)
-        pass
-
-    def forward(self, input, adj):
-        x = self.ingc(input, adj)
-        x = F.dropout(x, self.dropout, training=self.training)
-        x = self.reslayer(x, adj)
-        # x = F.dropout(x, self.dropout, training=self.training)
-        return F.log_softmax(x, dim=1)
+    def load(self, sess=None):
+        if not sess:
+            raise AttributeError("TensorFlow session not provided.")
+        saver = tf.train.Saver(self.vars)
+        save_path = "tmp/%s.ckpt" % self.name
+        saver.restore(sess, save_path)
+        print("Model restored from file: %s" % save_path)
 
 
+class MLP(Model):
+    def __init__(self, placeholders, input_dim, **kwargs):
+        super(MLP, self).__init__(**kwargs)
+
+        self.inputs = placeholders['features']
+        self.input_dim = input_dim
+        # self.input_dim = self.inputs.get_shape().as_list()[1]  # To be supported in future Tensorflow versions
+        self.output_dim = placeholders['labels'].get_shape().as_list()[1]
+        self.placeholders = placeholders
+
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+
+        self.build()
+
+    def _loss(self):
+        # Weight decay loss
+        for var in self.layers[0].vars.values():
+            self.loss += FLAGS.weight_decay * tf.nn.l2_loss(var)
+
+        # Cross entropy error
+        self.loss += masked_softmax_cross_entropy(self.outputs, self.placeholders['labels'],
+                                                  self.placeholders['labels_mask'])
+
+    def _accuracy(self):
+        self.accuracy = masked_accuracy(self.outputs, self.placeholders['labels'],
+                                        self.placeholders['labels_mask'])
+
+    def _build(self):
+        self.layers.append(Dense(input_dim=self.input_dim,
+                                 output_dim=FLAGS.hidden1,
+                                 placeholders=self.placeholders,
+                                 act=tf.nn.relu,
+                                 dropout=True,
+                                 sparse_inputs=True,
+                                 logging=self.logging))
+
+        self.layers.append(Dense(input_dim=FLAGS.hidden1,
+                                 output_dim=self.output_dim,
+                                 placeholders=self.placeholders,
+                                 act=lambda x: x,
+                                 dropout=True,
+                                 logging=self.logging))
+
+    def predict(self):
+        return tf.nn.softmax(self.outputs)
+
+
+class GCN(Model):
+    def __init__(self, placeholders, input_dim, **kwargs):
+        super(GCN, self).__init__(**kwargs)
+
+        self.inputs = placeholders['features']
+        self.input_dim = input_dim
+        # self.input_dim = self.inputs.get_shape().as_list()[1]  # To be supported in future Tensorflow versions
+        self.output_dim = placeholders['labels'].get_shape().as_list()[1]
+        self.placeholders = placeholders
+
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+
+        self.build()
+
+    def _loss(self):
+        # Weight decay loss
+        for var in self.layers[0].vars.values():
+            self.loss += FLAGS.weight_decay * tf.nn.l2_loss(var)
+
+        # Cross entropy error
+        self.loss += masked_softmax_cross_entropy(self.outputs, self.placeholders['labels'],
+                                                  self.placeholders['labels_mask'])
+
+    def _accuracy(self):
+        self.accuracy = masked_accuracy(self.outputs, self.placeholders['labels'],
+                                        self.placeholders['labels_mask'])
+
+    def _build(self):
+
+        self.layers.append(GraphConvolution(input_dim=self.input_dim,
+                                            output_dim=FLAGS.hidden1,
+                                            placeholders=self.placeholders,
+                                            act=tf.nn.relu,
+                                            dropout=True,
+                                            sparse_inputs=True,
+                                            logging=self.logging))
+
+        self.layers.append(GraphConvolution(input_dim=FLAGS.hidden1,
+                                            output_dim=self.output_dim,
+                                            placeholders=self.placeholders,
+                                            act=lambda x: x,
+                                            dropout=True,
+                                            logging=self.logging))
+
+    def predict(self):
+        return tf.nn.softmax(self.outputs)

@@ -19,6 +19,15 @@ def laplacian(adj):
    return (d_mat - adj).tocoo()
 
 
+# def gcn(adj):
+#    adj = sp.coo_matrix(adj + sp.eye(adj.shape[0]))
+#    row_sum = np.array(adj.sum(1))
+#    d_inv_sqrt = np.power(row_sum, -0.5).flatten()
+#    d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
+#    d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
+#    return adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).tocoo()
+#        # (sp.eye(adj.shape[0]) + d_mat_inv_sqrt.dot(adj).dot(d_mat_inv_sqrt)).tocoo()
+
 def gcn(adj):
    adj = sp.coo_matrix(adj)
    row_sum = np.array(adj.sum(1))
@@ -26,6 +35,7 @@ def gcn(adj):
    d_inv_sqrt[np.isinf(d_inv_sqrt)] = 0.
    d_mat_inv_sqrt = sp.diags(d_inv_sqrt)
    return (sp.eye(adj.shape[0]) + d_mat_inv_sqrt.dot(adj).dot(d_mat_inv_sqrt)).tocoo()
+
 
 
 def aug_normalized_adjacency(adj):
