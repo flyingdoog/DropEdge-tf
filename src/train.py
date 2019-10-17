@@ -23,7 +23,7 @@ flags.DEFINE_float('dropout', 0.5, 'Dropout rate (1 - keep probability).')
 flags.DEFINE_float('weight_decay', 5e-4, 'Weight for L2 loss on embedding matrix.')
 flags.DEFINE_integer('early_stopping', 10, 'Tolerance for early stopping (# of epochs).')
 flags.DEFINE_integer('max_degree', 3, 'Maximum Chebyshev polynomial degree.')
-flags.DEFINE_float('percent', 0.7, 'Maximum Chebyshev polynomial degree.')
+flags.DEFINE_float('percent', 1, 'Maximum Chebyshev polynomial degree.')
 flags.DEFINE_string('normalization', 'AugNormAdj', 'normalization')  # 'gcn', 'gcn_cheby', 'dense'
 flags.DEFINE_string('task_type', 'semi', 'normalization')  # 'gcn', 'gcn_cheby', 'dense'
 
@@ -64,13 +64,13 @@ model = GCN(placeholders, input_dim=features[2][1], logging=True)
 sess = tf.Session()
 
 
-def construct_feed_dict(features, support, labels, labels_mask, placeholders):
+def construct_feed_dict(features, support_, labels, labels_mask, placeholders):
     """Construct feed dictionary."""
     feed_dict = dict()
     feed_dict.update({placeholders['labels']: labels})
     feed_dict.update({placeholders['labels_mask']: labels_mask})
     feed_dict.update({placeholders['features']: features})
-    feed_dict.update({placeholders['support']: support})
+    feed_dict.update({placeholders['support']: support_})
     feed_dict.update({placeholders['num_features_nonzero']: features[1].shape})
     return feed_dict
 
@@ -87,16 +87,17 @@ def evaluate(features, support, labels, mask, placeholders):
 sess.run(tf.global_variables_initializer())
 
 cost_val = []
-sample = Sampler(features,adj)
+sample = Sampler(support)
 # Train model
 for epoch in range(FLAGS.epochs):
 
     t = time.time()
     # Construct feed dictionary
-    sample_support = sample.randomedge_sampler(percent=FLAGS.percent)
-    sample_support = sparse_to_tuple(fetch_normalization(FLAGS.normalization)(adj))
-    if FLAGS.percent>=1.0:
-        sample_support = support
+    sample_support = support
+    if FLAGS.percent < 1.0:
+        sample_support = sample.randomedge_sampler(percent=FLAGS.percent)
+        sample_support = sparse_to_tuple(fetch_normalization(FLAGS.normalization)(sample_support))
+
 
     feed_dict = construct_feed_dict(features, sample_support, y_train, train_mask, placeholders)
     feed_dict.update({placeholders['dropout']: FLAGS.dropout})

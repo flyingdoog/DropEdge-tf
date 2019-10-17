@@ -5,7 +5,7 @@ from normalization import fetch_normalization
 
 class Sampler:
     """Sampling the input graph data."""
-    def __init__(self, adj, normalization, task_type="full"):
+    def __init__(self, adj):
         self.adj = adj
         self.train_adj = adj
 
@@ -26,6 +26,7 @@ class Sampler:
                                (self.train_adj[0][perm,0],
                                 self.train_adj[0][perm,1])),
                               shape=self.train_adj[2])
+
         return r_adj
 
     def vertex_sampler(self, percent, normalization):
