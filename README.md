@@ -22,13 +22,13 @@ This is an unofficial Tensorflow implementation of the paper: DropEdge: Towards 
 ## References
 ```
 @inproceedings{
-anonymous2020dropedge,
+rong2020dropedge,
 title={DropEdge: Towards Deep Graph Convolutional Networks on Node Classification},
-author={Anonymous},
-booktitle={Submitted to International Conference on Learning Representations},
+author={Yu Rong and Wenbing Huang and Tingyang Xu and Junzhou Huang},
+booktitle={International Conference on Learning Representations},
 year={2020},
-url={https://openreview.net/forum?id=Hkx1qkrKPr},
-note={under review}
+url={https://openreview.net/forum?id=Hkx1qkrKPr}
+
 }
 
 @inproceedings{kipf2017semi,
